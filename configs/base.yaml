@@ -1,0 +1,141 @@
+debug: True
+data_dir: 'stock_data'
+scratch_dir: 'scratch'
+symbols: null
+
+# Data Dims
+train_len: null
+test_len: null
+obs_dim: null
+feat_dim: null
+
+# Environment
+init_cash: 10000
+reward_scale: 1000
+
+# Training
+train_iterations: 1000
+seed_episodes: 10
+collect_interval: 5
+interaction_episodes: 1
+
+batch_dim: 16
+batch_len: 64
+batch_ratio: 0.5
+
+# Optimization
+actor_lr: 0.00004
+critic_lr: 0.00004
+model_lr: 0.00004
+epsilon: 0.00000000000000000001
+clip_grad: 0.3
+
+# Experience Replay Buffer 
+replay_capacity: 500000
+
+# Two-Hot Encoding
+low: -20
+high: 20
+num_bins: 199
+
+# World Model
+pred_scale: 1
+dyn_scale: 1
+rep_scale: 0.1
+free_nats: 1
+
+recurrent_dim: 512
+stochastic_dim: null
+discrete_dim: 32
+unimix: 0.01
+
+sequence_model: 
+    hidden_dim: 512
+
+embedder:
+    num_heads: 4
+    dropout: 0.1
+    num_attn_layers: 2
+
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 1
+    init_zeros: False
+
+encoder:
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 3
+    init_zeros: False
+
+dynamics_predictor: 
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 2
+    init_zeros: False
+
+reward_predictor:
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 1
+    init_zeros: True
+
+decoder: 
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 3
+    init_zeros: False
+
+# Agent
+horizon: 15
+gamma: 0.997
+lam: 0.95
+
+actor:
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 3
+    init_zeros: False
+
+    low: 0.0
+    high: 1.0
+    num_bins: 49
+    action_repeat: 2
+
+    loss_scale: 1
+    entropy_regularizer: 0.0003
+    unimix: 0.0
+
+    retnorm_decay: 0.01
+    retnorm_limit: 1.0
+    retnorm_low: 0.05
+    retnorm_high: 0.95
+
+    ema_decay: 0.01
+    ema_limit: 0.00000001
+    ema_low: 0.0
+    ema_high: 1.0
+
+critic: 
+    hidden_dim: 512
+    activation: SiLU
+    normalize: True
+    num_hidden_layers: 3
+    init_zeros: True
+
+    loss_scale: 1
+    replay_loss_scale: 0.3
+    
+    ema_decay: 0.01
+    ema_limit: 0.00000001
+    ema_low: 0.0
+    ema_high: 1.0
+
+    target_update_interval: 1
+    slow_target_frac: 0.02
