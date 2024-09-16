@@ -31,6 +31,7 @@ class DreamerV3:
         self.eval_len = cfg["test_len"]
         self.obs_dim = cfg["obs_dim"]
         self.feat_dim = cfg["feat_dim"]
+        self.act_dim = cfg["actor"]["num_bins"]
 
         self.recur_state_dim = cfg["recurrent_dim"]
         self.stoch_state_dim = cfg["stochastic_dim"] * cfg["discrete_dim"]
@@ -41,8 +42,8 @@ class DreamerV3:
         self.lam = cfg["lam"]
         self.gamma = cfg["gamma"]
 
-        self.target_update_interval = self.cfg["critic"]["target_update_interval"]
-        self.slow_target_frac = self.cfg["critic"]["slow_target_frac"]
+        self.target_update_interval = cfg["critic"]["target_update_interval"]
+        self.slow_target_frac = cfg["critic"]["slow_target_frac"]
 
         # Models
         self.world_model = WorldModel(cfg)
@@ -64,7 +65,6 @@ class DreamerV3:
 
         # Experience replay
         self.buffer = ReplayBuffer(cfg)
-
 
     def train(self):
         with torch.no_grad():
@@ -88,51 +88,7 @@ class DreamerV3:
 
             with torch.no_grad():
                 self._env_interaction()
-                self._env_interaction(eval=True)
-
-
-    def _env_interaction(self, seed=False, eval=False):
-        if seed: episodes = self.cfg["seed_episodes"]
-        elif eval: episodes = 1
-        else: episodes = self.cfg["interaction_episodes"]
-    
-        dl = self.eval_dl if eval else self.train_dl
-        length = self.eval_len if eval else self.train_len
-
-        for e in range(episodes):
-            with torch.no_grad():
-                h = self.world_model.initial_state([1])
-                obs = torch.empty(length, self.obs_dim, self.feat_dim, device=self.device)
-                actions = torch.empty(length, self.obs_dim, device=self.device)
-                rewards = torch.empty(length, device=self.device)
-
-                x, rew, d = None, 0, False
-                for i, (features, targets) in enumerate(dl):
-                    if i == 0: 
-                        obs[0] = x = self.env.reset(features)
-                    else:
-                        if seed: 
-                            acts = self.actor.sample(x)
-                        else:
-                            x = self.world_model.embedder(x)
-                            _, z_stoch = self.world_model.encoder(h, x)
-                            acts = self.actor(torch.cat((h, z_stoch), -1), eval)
-                            h = self.world_model.sequence_model(h, z_stoch, acts)
-                        x_next, rew, d = self.env.step(acts, features, targets)
-                        obs[i], actions[i], rewards[i] = x.view(obs[i].size()), acts, rew
-                        x = x_next
-
-                    print_freq = 250 if seed else 50
-                    if i % print_freq == 0 or i == length-1:
-                        reward = torch.sum(rewards).item() if i == length-1 else torch.sum(rewards[i-print_freq:i]).item()
-                        profit = self.env.value - self.env.init_cash
-                        if seed: print(f"Seeding the replay buffer ({e+1}/{episodes}) | Step {i+1}/{length}   ", end="\r")
-                        elif eval: print(f"\t Evaluation | Step {i+1}/{length} | Reward: {reward:.2f} | Profit: {profit:.2f}", end="\r")
-                        else: print(f"\tInteraction | Step {i+1}/{length} | Reward: {reward:.2f} | Profit: {profit:.2f}", end="\r")
-
-                    if d: break
-                if not eval: self.buffer.extend(obs, actions, rewards)
-        print()
+                self._env_eval()
 
 
     def _dynamics_learning(self, x, acts, rew):
@@ -161,8 +117,8 @@ class DreamerV3:
         traj = torch.empty(self.horizon+1, self.batch_dim*self.batch_len, self.latent_state_dim, device=self.device)
         traj[0] = s
 
-        acts_imag = torch.empty(self.horizon+1, self.batch_dim*self.batch_len, self.obs_dim, device=self.device)
-        acts = self.actor(s)
+        acts_imag = torch.empty(self.horizon+1, self.batch_dim*self.batch_len, self.act_dim, device=self.device)
+        acts = self.actor(s)[1]
         acts_imag[0] = acts
 
         # Imagine trajectories
@@ -170,7 +126,7 @@ class DreamerV3:
             h, z_hat_stoch = self.world_model.imagine(h, z_hat_stoch, acts)
             s = torch.cat((h.detach(), z_hat_stoch.detach()), -1)
             traj[t] = s
-            acts = self.actor(s)
+            acts = self.actor(s)[1]
             acts_imag[t] = acts
 
         slow_critic = self.critic_target(traj)
@@ -186,8 +142,8 @@ class DreamerV3:
             lam_rets.append(interm[t] + discount[t] * self.lam * lam_rets[-1])
         lam_ret = torch.stack(list(reversed(lam_rets))[:-1], dim=0)
 
-        policy = Categorical(self.actor(traj.detach()))
-        actor_loss = self.actor.loss(lam_ret, targ_val, policy, weight)
+        policy = self.actor(traj.detach())[0]
+        actor_loss = self.actor.loss(lam_ret, targ_val, policy, acts_imag, weight)
 
         val_dist = self.critic(traj[:-1].detach())
         slow_val_dist = self.critic_target(traj[:-1].detach())
@@ -202,3 +158,71 @@ class DreamerV3:
         self.critic_optimizer.step()
 
         return actor_loss.item(), critic_loss.item()
+    
+    def _env_interaction(self, seed=False):
+        if seed: episodes = self.cfg["seed_episodes"]
+        else: episodes = self.cfg["interaction_episodes"]
+
+        for e in range(episodes):
+            with torch.no_grad():
+                rand_idx = torch.randint(self.obs_dim-1, (1,)).item()
+                
+                h = self.world_model.initial_state([1])
+                obs = torch.empty(self.train_len, self.feat_dim, device=self.device)
+                actions = torch.empty(self.train_len, self.act_dim, device=self.device)
+                rewards = torch.empty(self.train_len, device=self.device)
+
+                x, rew, d = None, 0, False
+                for t, (features, targets) in enumerate(self.train_dl):
+                    features = features[:, rand_idx].view(1, self.feat_dim-1)
+                    targets = targets[:, rand_idx].view(1)
+                    if t == 0:
+                        obs[0] = x = self.env.reset(features)
+                    else:
+                        if seed: 
+                            acts = self.actor.sample(x)[1]
+                        else:
+                            _, z_stoch = self.world_model.encoder(h, x)
+                            acts = self.actor(torch.cat((h, z_stoch), -1))[1]
+                            h = self.world_model.sequence_model(h, z_stoch, acts)
+                        x_next, rew, d = self.env.step(acts, features, targets)
+                        obs[t], actions[t], rewards[t] = x.view(obs[t].size()), acts, rew
+                        x = x_next
+
+                    print_freq = 250
+                    if t % print_freq == 0 or t == self.train_len-1:
+                        reward = torch.sum(rewards).item() if t == self.train_len-1 else torch.sum(rewards[t-print_freq:t]).item()
+                        profit = self.env.value - self.env.init_cash
+                        if seed: print(f"Seeding the replay buffer ({e+1}/{episodes}) | Step {t+1}/{self.train_len}   ", end="\r")
+                        else: print(f"\tInteraction | Step {t+1}/{self.train_len} | Reward: {reward:.2f} | Profit: {profit:.2f}", end="\r")
+
+                    if d: break
+                self.buffer.extend(obs, actions, rewards)
+        print()
+
+    def _env_eval(self):
+        with torch.no_grad():
+            h = self.world_model.initial_state([self.obs_dim])
+            rewards = torch.empty(self.eval_len, device=self.device)
+            rewards[0] = 0
+
+            x, d = None, False
+            for t, (features, targets) in enumerate(self.eval_dl):
+                features = features.view(self.obs_dim, self.feat_dim-1)
+                targets = targets.view(self.obs_dim)
+                if t == 0: 
+                    x = self.env.reset(features)
+                else:
+                    _, z_stoch = self.world_model.encoder(h, x)
+                    acts = self.actor(torch.cat((h, z_stoch), -1))[1]
+                    h = self.world_model.sequence_model(h, z_stoch, acts)
+                    x, rewards[t], d = self.env.step(acts, features, targets)
+
+                print_freq = 100
+                if t % print_freq == 0 or t == self.eval_len-1:
+                    reward = torch.sum(rewards).item() if t == self.eval_len-1 else torch.sum(rewards[t-print_freq:t]).item()
+                    profit = self.env.value - self.env.init_cash
+                    print(f"\t Evaluation | Step {t+1}/{self.eval_len} | Reward: {reward:.2f} | Profit: {profit:.2f}", end="\r")
+
+                if d: break
+            print()

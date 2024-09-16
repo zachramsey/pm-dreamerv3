@@ -8,42 +8,37 @@ class TradingEnv:
 
         self.init_cash = cfg["init_cash"]
         self.rew_scale = cfg["reward_scale"]
-        self.num_stocks = cfg["obs_dim"]
-        self.num_features = cfg["feat_dim"]
+        self.num_stocks = None
+        self.num_features = None
 
         self.curr_step = 0
-        self.holdings = None
         self.value = None
+        self.holdings = None
+        self.cash = None
         self.history = None
         self.returns = None
 
     def reset(self, features):
-        # features shape: (1, num_stocks, num_features)
+        self.num_stocks, self.num_features = features.shape[-2:]
 
         self.curr_step = 0
-        self.holdings = torch.zeros(self.num_stocks).to(self.device)
-        self.holdings[0] = self.init_cash
         self.value = torch.tensor(self.init_cash).to(self.device)
-        self.history = [(self.holdings, self.value)]
+        self.holdings = torch.zeros(self.num_stocks).to(self.device)
+        self.cash = self.init_cash
+        self.history = [(self.value, self.holdings, self.cash)]
         self.returns = torch.tensor([]).to(self.device)
 
         actions = torch.zeros(self.num_stocks).to(self.device)
-        actions[0] = 1
         state = self._get_state(actions, features)
 
         return state
 
     def step(self, actions, features, targets):
-        # actions shape: (1, num_stocks)
-        # features shape: (1, num_stocks, num_features)
-        # targets shape: (1, num_stocks)
+        self.curr_step += 1
 
-        self.curr_step += 1                             # Move to the next time step
+        # Convert the actions to a percentage
+        actions = torch.argmax(actions, dim=-1) / actions.shape[-1]
         
-        actions = actions.squeeze(0)
-        features = features.squeeze(0)
-        targets = targets.squeeze(0)
-
         self._execute_trades(actions, targets)          # Execute the trades based on the actions
         next_state = self._get_state(actions, features) # Get the next state
         reward = self._get_reward()                     # Get the reward
@@ -54,37 +49,23 @@ class TradingEnv:
         return next_state, reward, done
     
     def _execute_trades(self, actions, targets):
-        # actions shape: (num_stocks)
-        # targets shape: (num_stocks)
-
         actions = F.softmax(actions, dim=0)
-
-        prices = torch.cat([torch.tensor([1]).to(self.device), targets])
         
         prev_val = self.value
-        curr_val = torch.dot(prices, self.holdings)
+        curr_val = self.cash + torch.dot(targets, self.holdings)
 
-        self.holdings[1:] = torch.floor((curr_val * actions[1:]) / prices[1:])
-        stock_val = torch.dot(prices[1:], self.holdings[1:])
+        self.holdings = torch.floor((curr_val * actions) / targets)
+        stock_val = torch.dot(targets, self.holdings)
 
-        self.holdings[0] = curr_val - stock_val
-        self.value = (stock_val + self.holdings[0])
+        self.cash = curr_val - stock_val
+        self.value = stock_val + self.cash
 
         log_return = torch.log(self.value / prev_val)
         self.returns = torch.cat([self.returns, log_return.unsqueeze(0)])
-        self.history.append((self.holdings, self.value))
+        self.history.append((self.value, self.holdings, self.cash))
     
     def _get_state(self, actions, features):
-        # actions shape: (num_stocks)
-        # features shape: (1, num_stocks, num_features)
-
-        actions = actions.unsqueeze(1)
-        features = features.squeeze(0)
-
-        cash_features = torch.zeros(1, self.num_features-1).to(self.device)
-        state = torch.cat([cash_features, features], dim=0)
-        state = torch.cat([state, actions], dim=1)
-
+        state = torch.cat([features, actions.unsqueeze(-1)], dim=1)   # (num_stocks, num_features + 1)
         return state
     
     def _get_reward(self):

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Independent, OneHotCategoricalStraightThrough, kl_divergence
 
-from utils.networks import ModularMLP, ModularAttn
+from utils.networks import ModularMLP
 from utils.distributions import SymLogTwoHotDist, SymLogDist, symlog
 from utils.utils import unimix, get_stochastic_state
 
@@ -27,7 +27,6 @@ class WorldModel(nn.Module):
         self.recur_state_dim = cfg["recurrent_dim"]
 
         self.sequence_model = SequenceModel(cfg)
-        self.embedder = Embedder(cfg)
         self.encoder = Encoder(cfg)
         self.dynamics_predictor = DynamicsPredictor(cfg)
         self.reward_predictor = RewardPredictor(cfg)
@@ -53,7 +52,6 @@ class WorldModel(nn.Module):
             a_ = (1 - is_first) * a_
             h = is_first * self.initial_state(h.shape[:-1]) + (1 - is_first) * h
             
-            x_ = self.embedder(x_)                      # Embed the input
             z_distr, z_stoch = self.encoder(h, x_)      # Encode the input into the latent state
             h = self.sequence_model(h, z_stoch, a_)     # Generate the next hidden state
             z_hat_distr, _ = self.dynamics_predictor(h) # Predict the latent state
@@ -98,24 +96,16 @@ class WorldModel(nn.Module):
         return l_rec, info
     
 
-class Embedder(nn.Module):
-    def __init__(self, cfg):
-        super(Embedder, self).__init__()
-        self.model = ModularAttn(cfg)
-
-    def forward(self, x):
-        if x.dim() == 2: x = x.unsqueeze(0)
-        x = symlog(x)
-        x = self.model(x)
-        x = torch.flatten(x, 1, 2)
-        return x
-    
-
 # V2: Representation Model | V3: Encoder
 class Encoder(nn.Module):
     def __init__(self, cfg):
         super(Encoder, self).__init__()
-        input_dim = cfg["recurrent_dim"] + cfg["obs_dim"] * cfg["feat_dim"]
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.embedding = nn.Linear(cfg["feat_dim"], cfg["stochastic_dim"], device=self.device)
+
+        input_dim = cfg["recurrent_dim"] + cfg["stochastic_dim"]
         output_dim = cfg["stochastic_dim"] * cfg["discrete_dim"]
         self.encode_model = ModularMLP(input_dim, output_dim, cfg["encoder"])
 
@@ -123,8 +113,8 @@ class Encoder(nn.Module):
         self.unimix = cfg["unimix"]
 
     def forward(self, h, x):
-        x = torch.cat([h, x], dim=-1)
-        x = self.encode_model(x)
+        x = self.embedding(symlog(x))
+        x = torch.sigmoid(self.encode_model(torch.cat([h, x], dim=-1)))
         z_distr = unimix(x, self.discrete_dim, self.unimix)
         z_stoch = get_stochastic_state(z_distr, self.discrete_dim)
         return z_distr, z_stoch
@@ -134,14 +124,16 @@ class Encoder(nn.Module):
 class SequenceModel(nn.Module):
     def __init__(self, cfg):
         super(SequenceModel, self).__init__()
+        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        input_dim = cfg["stochastic_dim"] * cfg["discrete_dim"] + cfg["obs_dim"]
-        self.embedding = nn.Linear(input_dim, cfg["recurrent_dim"], device=self.device)
-        self.rnn = nn.GRUCell(cfg["recurrent_dim"], cfg["recurrent_dim"], device=self.device)
+        input_dim = cfg["stochastic_dim"] * cfg["discrete_dim"] + cfg["actor"]["num_bins"]
+        recur_dim = cfg["recurrent_dim"]
+        self.embedding = nn.Linear(input_dim, recur_dim, device=self.device)
+        self.rnn = nn.GRUCell(recur_dim, recur_dim, device=self.device)
 
     def forward(self, h, z, a):
-        x = self.embedding(torch.cat([z, a], dim=-1))
+        x = self.embedding(torch.cat([z, a, h], dim=-1))
         h = self.rnn(x, h)
         return h
         
@@ -150,6 +142,7 @@ class SequenceModel(nn.Module):
 class DynamicsPredictor(nn.Module):
     def __init__(self, cfg):
         super(DynamicsPredictor, self).__init__()
+
         input_dim = cfg["recurrent_dim"]
         output_dim = cfg["discrete_dim"] * cfg["stochastic_dim"]
         self.model = ModularMLP(input_dim, output_dim, cfg["dynamics_predictor"])
@@ -167,8 +160,11 @@ class DynamicsPredictor(nn.Module):
 class RewardPredictor(nn.Module):
     def __init__(self, cfg):
         super(RewardPredictor, self).__init__()
+        
         input_dim = cfg["recurrent_dim"] + cfg["stochastic_dim"] * cfg["discrete_dim"]
-        self.model = ModularMLP(input_dim, cfg["num_bins"], cfg["reward_predictor"])
+        output_dim = cfg["num_bins"]
+        self.model = ModularMLP(input_dim, output_dim, cfg["reward_predictor"])
+
         self.cfg = cfg
 
     def forward(self, s):
@@ -179,15 +175,13 @@ class RewardPredictor(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, cfg):
         super(Decoder, self).__init__()
+
         input_dim = cfg["recurrent_dim"] + cfg["stochastic_dim"] * cfg["discrete_dim"]
-        output_dim = cfg["obs_dim"] * cfg["feat_dim"]
+        output_dim = cfg["feat_dim"]
         self.model = ModularMLP(input_dim, output_dim, cfg["decoder"])
 
-        self.obs_dim = cfg["obs_dim"]
-        self.feat_dim = cfg["feat_dim"]
-
     def forward(self, s):
-        return SymLogDist(torch.unflatten(self.model(s), -1, (self.obs_dim, self.feat_dim)), dims=2)
+        return SymLogDist(self.model(s), dims=1)
     
 
 # V2: Discount Predictor | V3: Continue Predictor

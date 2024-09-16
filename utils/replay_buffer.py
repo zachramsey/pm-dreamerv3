@@ -12,6 +12,7 @@ class ReplayBuffer:
         self.train_len = cfg["train_len"]
         self.obs_dim = cfg["obs_dim"]
         self.feat_dim = cfg["feat_dim"]
+        self.act_dim = cfg["actor"]["num_bins"]
         
         self.capacity = (cfg["replay_capacity"] // self.train_len) * self.train_len
         self.batch_ratio = cfg["batch_ratio"]
@@ -39,8 +40,8 @@ class ReplayBuffer:
 
     def extend(self, observations, actions, rewards):
         # Ensure inputs have correct shapes
-        assert observations.shape == (self.train_len, self.obs_dim, self.feat_dim)
-        assert actions.shape == (self.train_len, self.obs_dim)
+        assert observations.shape == (self.train_len, self.feat_dim)
+        assert actions.shape == (self.train_len, self.act_dim)
         assert rewards.shape == (self.train_len,)
 
         # Create a TensorDict with the experience
@@ -57,8 +58,8 @@ class ReplayBuffer:
 
     def sample(self):
         batch_data = TensorDict({
-            "x": torch.empty(self.batch_dim, self.batch_len, self.obs_dim, self.feat_dim, device=self.cpu_device),
-            "a": torch.empty(self.batch_dim, self.batch_len, self.obs_dim, device=self.cpu_device),
+            "x": torch.empty(self.batch_dim, self.batch_len, self.feat_dim, device=self.cpu_device),
+            "a": torch.empty(self.batch_dim, self.batch_len, self.act_dim, device=self.cpu_device),
             "r": torch.empty(self.batch_dim, self.batch_len, device=self.cpu_device)
         })
 

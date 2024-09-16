@@ -14,7 +14,7 @@ TODO:
 
 import yaml
 from data_loader import StockDataLoader
-from env_multi import TradingEnv
+from environment import TradingEnv
 from dreamer import DreamerV3
 
 def main():

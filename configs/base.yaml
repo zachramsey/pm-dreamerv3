@@ -16,12 +16,12 @@ reward_scale: 1000
 # Training
 train_iterations: 1000
 seed_episodes: 10
-collect_interval: 5
+collect_interval: 10
 interaction_episodes: 1
 
 batch_dim: 16
 batch_len: 64
-batch_ratio: 0.5
+batch_ratio: 0.25
 
 # Optimization
 actor_lr: 0.00004
@@ -31,7 +31,7 @@ epsilon: 0.00000000000000000001
 clip_grad: 0.3
 
 # Experience Replay Buffer 
-replay_capacity: 500000
+replay_capacity: 5000000
 
 # Two-Hot Encoding
 low: -20
@@ -45,7 +45,7 @@ rep_scale: 0.1
 free_nats: 1
 
 recurrent_dim: 512
-stochastic_dim: null
+stochastic_dim: 32
 discrete_dim: 32
 unimix: 0.01
 
@@ -105,7 +105,7 @@ actor:
 
     low: 0.0
     high: 1.0
-    num_bins: 49
+    num_bins: 100
     action_repeat: 2
 
     loss_scale: 1
@@ -136,6 +136,8 @@ critic:
     ema_limit: 0.00000001
     ema_low: 0.0
     ema_high: 1.0
+
+    slow_regularizer: 1.0
 
     target_update_interval: 1
     slow_target_frac: 0.02

@@ -32,15 +32,12 @@ def unimix(logits, discrete_dim, unimix):
     Returns:
         torch.Tensor: The logits.
     """
-    if logits.dim() == 2:
-        logits = logits.view(logits.size(0), -1, discrete_dim)
-    assert logits.dim() == 3, f"uniform_mix: logits must have 3 dims, got {logits.dim()} | shape: {logits.shape}"
     if unimix > 0.0:
         logits = torch.softmax(logits, dim=-1)
         uniform = torch.ones_like(logits) / discrete_dim
         logits = (1 - unimix) * logits + unimix * uniform
         logits = probs_to_logits(logits)
-    return logits.view(logits.size(0), -1)
+    return logits
 
 #----------------------------------------------------------------------------------------------------
 
