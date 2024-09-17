@@ -1,10 +1,10 @@
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.distributions import OneHotCategorical
+from torch.distributions import Normal, Independent
 
 from utils.networks import ModularMLP
-from utils.utils import unimix, get_stochastic_state
-from utils.distributions import SymLogTwoHotDist
+from utils.distributions import SymLogTwoHotDist, ContDist
 
 
 class Critic(nn.Module):
@@ -40,28 +40,49 @@ class Actor(nn.Module):
         super(Actor, self).__init__()
 
         actor_cfg = cfg["actor"]
-        self.unimix = actor_cfg["unimix"]
-        self.num_bins = actor_cfg["num_bins"]
+
+        self.min_std = 0.1
+        self.max_std = 1.0
+        self.absmax = 1.0
 
         input_dim = cfg["recurrent_dim"] + cfg["stochastic_dim"] * cfg["discrete_dim"]
-        output_dim = self.num_bins
-        self.model = ModularMLP(input_dim, output_dim, actor_cfg)
+        hidden_dim = actor_cfg["hidden_dim"]
+        output_dim = 1
+
+        self.model = ModularMLP(input_dim, hidden_dim, actor_cfg)
+        self.mean_layer = nn.Linear(hidden_dim, output_dim, device=self.model.device)
+        self.mean_layer.apply(self._init_uniform_weight())
+        self.std_layer = nn.Linear(hidden_dim, output_dim, device=self.model.device)
+        self.std_layer.apply(self._init_uniform_weight())
 
         self.ret_norm = Moments(actor_cfg["retnorm_decay"], actor_cfg["retnorm_limit"], actor_cfg["retnorm_low"], actor_cfg["retnorm_high"])
         self.adv_norm = Moments(actor_cfg["ema_decay"], actor_cfg["ema_limit"], actor_cfg["ema_low"], actor_cfg["ema_high"])
         self.entropy_reg = actor_cfg["entropy_regularizer"]
 
+    def _init_uniform_weight(self, outscale=1.0):
+        def init(m):
+            limit = np.sqrt(3 * outscale / ((m.in_features + m.out_features) / 2))
+            nn.init.uniform_(m.weight, -limit, limit)
+            if hasattr(m.bias, "data"):
+                m.bias.data.fill_(0.0)
+        return init
+
     def forward(self, s):
-        a_distr = self.model(s)
-        a_distr = unimix(a_distr, self.num_bins, self.unimix)
-        a_stoch = get_stochastic_state(a_distr, self.num_bins)
-        return OneHotCategorical(logits=a_distr), a_stoch
+        out = self.model(s)
+        mean = self.mean_layer(out)
+        std = self.std_layer(out)
+        std = (self.max_std - self.min_std) * torch.sigmoid(std + 2.0) + self.min_std
+        a_distr = Normal(torch.tanh(mean), std)
+        a_distr = ContDist(Independent(a_distr, 1), absmax=self.absmax)
+        return a_distr, a_distr.sample()
 
     def sample(self, s):
-        a_distr = torch.randn(1, self.num_bins).to(s.device)
-        a_distr = unimix(a_distr, self.num_bins, self.unimix)
-        a_stoch = get_stochastic_state(a_distr, self.num_bins)
-        return OneHotCategorical(logits=a_distr), a_stoch
+        mean = torch.randn(1).to(s.device)
+        std = torch.randn(1).to(s.device)
+        std = (self.max_std - self.min_std) * torch.sigmoid(std + 2.0) + self.min_std
+        a_distr = Normal(torch.tanh(mean), std)
+        a_distr = ContDist(Independent(a_distr, 1), absmax=self.absmax)
+        return a_distr, a_distr.sample()
     
     def loss(self, lam_ret, targ_val, policy, acts, weight):
         _, ret_scale = self.ret_norm(lam_ret)
@@ -71,7 +92,7 @@ class Actor(nn.Module):
         log_policy = policy.log_prob(acts)[:-1]
         entropy = policy.entropy()[:-1]
         return torch.mean(weight[:-1] * -(log_policy * norm_advantage.detach() + self.entropy_reg * entropy))
-  
+
 
 class Moments(nn.Module):
     def __init__(self, rate=0.01, limit=1e-8, per_low=0.05, per_high=0.95):
@@ -105,4 +126,3 @@ class Moments(nn.Module):
             return offset, span
         else:
             return 0.0, 1.0
-        

@@ -106,3 +106,33 @@ class BernoulliSafeMode(Bernoulli):
     @property
     def mode(self):
         return (self.probs > 0.5).to(self.probs)
+    
+
+class ContDist:
+    def __init__(self, dist, absmax):
+        super(ContDist, self).__init__()
+        self.dist = dist
+        self.mean = dist.mean
+        self.absmax = absmax
+
+    def __getattr__(self, name):
+        return getattr(self.dist, name)
+
+    def entropy(self):
+        return self.dist.entropy()
+
+    def mode(self):
+        out = self.dist.mean
+        if self.absmax is not None:
+            out *= (self.absmax / torch.clip(torch.abs(out), min=self.absmax)).detach()
+        return out
+
+    def sample(self, sample_shape=()):
+        out = self.dist.rsample(sample_shape)
+        if self.absmax is not None:
+            out *= (self.absmax / torch.clip(torch.abs(out), min=self.absmax)).detach()
+        return out
+
+    def log_prob(self, x):
+        return self.dist.log_prob(x)
+

@@ -35,9 +35,6 @@ class TradingEnv:
 
     def step(self, actions, features, targets):
         self.curr_step += 1
-
-        # Convert the actions to a percentage
-        actions = torch.argmax(actions, dim=-1) / actions.shape[-1]
         
         self._execute_trades(actions, targets)          # Execute the trades based on the actions
         next_state = self._get_state(actions, features) # Get the next state
@@ -49,7 +46,8 @@ class TradingEnv:
         return next_state, reward, done
     
     def _execute_trades(self, actions, targets):
-        actions = F.softmax(actions, dim=0)
+        actions = F.softmax(actions, dim=0).flatten()
+        targets = targets
         
         prev_val = self.value
         curr_val = self.cash + torch.dot(targets, self.holdings)
@@ -65,7 +63,7 @@ class TradingEnv:
         self.history.append((self.value, self.holdings, self.cash))
     
     def _get_state(self, actions, features):
-        state = torch.cat([features, actions.unsqueeze(-1)], dim=1)   # (num_stocks, num_features + 1)
+        state = torch.cat([features, actions.view(-1, 1)], dim=1)   # (num_stocks, num_features + 1)
         return state
     
     def _get_reward(self):

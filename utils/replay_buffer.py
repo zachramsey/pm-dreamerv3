@@ -12,7 +12,7 @@ class ReplayBuffer:
         self.train_len = cfg["train_len"]
         self.obs_dim = cfg["obs_dim"]
         self.feat_dim = cfg["feat_dim"]
-        self.act_dim = cfg["actor"]["num_bins"]
+        self.act_dim = cfg["act_dim"]
         
         self.capacity = (cfg["replay_capacity"] // self.train_len) * self.train_len
         self.batch_ratio = cfg["batch_ratio"]

@@ -16,12 +16,12 @@ reward_scale: 1000
 # Training
 train_iterations: 1000
 seed_episodes: 10
-collect_interval: 10
+collect_interval: 25
 interaction_episodes: 1
 
 batch_dim: 16
 batch_len: 64
-batch_ratio: 0.25
+batch_ratio: 0.3
 
 # Optimization
 actor_lr: 0.00004
@@ -47,6 +47,7 @@ free_nats: 1
 recurrent_dim: 512
 stochastic_dim: 32
 discrete_dim: 32
+act_dim: 1
 unimix: 0.01
 
 sequence_model: 

@@ -1,8 +1,6 @@
 
 import copy
-
 import torch
-from torch.distributions import Categorical
 
 from nfnets.agc import AGC
 from utils.laprop import LaProp
@@ -31,7 +29,7 @@ class DreamerV3:
         self.eval_len = cfg["test_len"]
         self.obs_dim = cfg["obs_dim"]
         self.feat_dim = cfg["feat_dim"]
-        self.act_dim = cfg["actor"]["num_bins"]
+        self.act_dim = cfg["act_dim"]
 
         self.recur_state_dim = cfg["recurrent_dim"]
         self.stoch_state_dim = cfg["stochastic_dim"] * cfg["discrete_dim"]
@@ -174,8 +172,8 @@ class DreamerV3:
 
                 x, rew, d = None, 0, False
                 for t, (features, targets) in enumerate(self.train_dl):
-                    features = features[:, rand_idx].view(1, self.feat_dim-1)
-                    targets = targets[:, rand_idx].view(1)
+                    features = features[:, rand_idx].view(-1, self.feat_dim-1)
+                    targets = targets[:, rand_idx].view(-1)
                     if t == 0:
                         obs[0] = x = self.env.reset(features)
                     else:

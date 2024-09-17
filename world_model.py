@@ -127,7 +127,7 @@ class SequenceModel(nn.Module):
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        input_dim = cfg["stochastic_dim"] * cfg["discrete_dim"] + cfg["actor"]["num_bins"]
+        input_dim = cfg["stochastic_dim"] * cfg["discrete_dim"] + 1 + cfg["recurrent_dim"]#cfg["actor"]["num_bins"]
         recur_dim = cfg["recurrent_dim"]
         self.embedding = nn.Linear(input_dim, recur_dim, device=self.device)
         self.rnn = nn.GRUCell(recur_dim, recur_dim, device=self.device)
